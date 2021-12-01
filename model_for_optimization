@@ -1,0 +1,410 @@
+```{r}
+library(dplyr)
+library(zeallot) # %<-% operator for assigning multiple values at once
+
+
+### Following function is fed into nelder-mead optimization and contains both the time-dependent model and the mean-squared error calculation. The output is just MSE, and the Nelder-Mead finds the values in vector "par" that minimize the MSE. "par" contains the rate constants for each process. This version of the model has three processes for denitrification (N2O production via NO2, N2O production via NO3, N2O consumption) as well as nitrification via ammonia-oxidizing bacteria (AOB) and ammonia-oxidizing archaea (AOA). Model output is plotted and looked at by running the just the code for the model with the optimized rate constants. ###
+  
+model_MSE_for_optim = function(par, # vector of values that we optimize for. In this case, rate constants for the 5 N2O processes 
+                               alpha_values = "default", # represents isotope effects
+                               initial_isotopes = "Test", # initial isotope values
+                               n_time_steps = 1000, # number of time steps
+                               time_step = 0.2, # size of a time step
+                               obs = n2o_master %>% filter(sigmatheta >= 23.5 & sigmatheta <= 25.8 & station %in% c("1","2","3","4","5","6","7","8","9","10","11","12"))){ # last input is the dataset of cruise values that the MSE is calculated with
+
+  #### MODEL SETUP ####
+  #####################
+  
+  # time-step
+  dt = time_step
+  # number of timesteps
+  t = n_time_steps
+  times = 1:t #vector of time steps
+  
+  ### FUNCTIONS NECESSARY FOR MODEL
+  
+  # logfxn() and exponential() are two functions that can be employed to create time-varying rate constants. It is used for time-varying consumption in some model runs
+  logfxn = function(time_vector, scaling, max, min){                 
+  
+    logfxn = (max-min)*(time_vector/(time_vector+scaling))+min
+  
+    return(logfxn)
+  }
+
+
+  exponential = function(time_vector,initial,decayrate,min){
+    
+    exponential = initial*2^(-decayrate*time_vector) + min
+    
+    return(exponential)
+  }
+
+  # Function for converting delta values into isotope ratios
+  convert_delta = function(i, d){            
+  
+    R15std = 0.00367647 # air N2
+    R18std = 0.00200517 # VSMOW
+  
+    if(i == "d15N"){
+      R = ((d/1000)+1)*R15std
+    } else if(i == "d18O"){
+      R = ((d/1000)+1)*R18std
+    } else{
+      R = -999
+    }
+  
+    if(R == -999){
+      return("Must set i equal to 'd15N' or d18O'")
+    } else{
+      return(R)
+    }
+  
+  }
+
+  ### DEFINE ISOTOPE EFFECTS
+
+  if(alpha_values == "default"){
+    # Isotope effects, trans into fractionation factors
+    alpha15noxA = 22/1000+1 # NOx -> N2Oa (Toyoda et al., 2005)
+    alpha15N2O_CONSA = 10.5/1000+1  # N2Oa -> N2 (This study)
+    alpha15noxB = 22/1000+1 # NOx -> N2Ob (Toyoda et al., 2005)
+    alpha15N2O_CONSB = 0/1000+1 # N2Ob -> N2 (This study -- no observed relationship)
+    alpha18NO3_to_N2O_b = 24/1000+1 # NO3- -> NO2-, branching isotope effect (Casciotti and McIlvin, 2007)
+    alpha18NO2_to_N2O_b = 12/1000+1 # NO2- -> N2O, branching isotope effect (Casciotti and McIlvin, 2007)
+    alpha18NO2_to_N2O = -2/1000+1 # NO2- -> N2O, kinetic isotope effect (Martin and Casciotti, 2016)
+    alpha18N2O_CONS = 16/1000+1 # N2O -> N2, kinetic isotope effect (This study)
+    alpha18h2o = 10/1000+1  # equilibration with seawater
+    alphaexch = 1.0153 #Not used, could be employed for water exchange
+    alpha15nh4A_AOA = -21.3/1000+1 #NH4+ --> N20 (Santoro et al., 2011)          
+    alpha15nh4B_AOA = 9/1000+1 #NH4+ --> N20 (Santoro et al., 2011)
+    alpha18nh4_AOA = -10.5/1000+1 #NH4+ --> N20 (Santoro et al., 2011)
+    alpha15nh4A_AOB = 62.5/1000+1 #NH4+ --> N20 (Sutka et al., 2006)          
+    alpha15nh4B_AOB = 31.5/1000+1 #NH4+ --> N20 (Sutka et al., 2006)
+    alpha18nh4_AOB = 3/1000+1 #NH4+ --> N20 (Frame and Casciotti, 2010)
+  } else {
+    alpha15noxA = alpha_values[1]/1000+1 #Custom Values
+    alpha15N2O_CONSA = alpha_values[2]/1000+1
+    alpha15noxB = alpha_values[3]/1000+1
+    alpha15N2O_CONSB = alpha_values[4]/1000+1
+    alpha18NO3_to_N2O_b = alpha_values[5]/1000+1
+    alpha18NO2_to_N2O_b = alpha_values[6]/1000+1
+    alpha18NO2_to_N2O = alpha_values[7]/1000+1
+    alpha18N2O_CONS = alpha_values[8]/1000+1
+    alpha18h2o = alpha_values[9]/1000+1
+    alphaexch = alpha_values[10]/1000+1
+    alpha15nh4A_AOA = alpha_values[11]/1000+1
+    alpha15nh4B_AOA = alpha_values[12]/1000+1
+    alpha18nh4_AOA = alpha_values[13]/1000+1
+    alpha15nh4A_AOB = alpha_values[14]/1000+1
+    alpha15nh4B_AOB = alpha_values[15]/1000+1
+    alpha18nh4_AOB = alpha_values[16]/1000+1
+  }
+
+  ### DEFINE INITIAL CONCENTRATIONS AND ISOTOPES
+  # Below are different initializations of isotopic values
+  # Initialization used for each run detailed in paper
+
+  if(initial_isotopes == "All Stations"){
+    N2O_init = 28.03085 # nmol/L; mean of all stations in sigma-theta range 26.0-27.0
+    d15N2Oa_init = 25.91926 # per mil
+    d15N2Ob_init = -2.539043 # per mil
+    d18N2O_init = 74.00766 # per mil
+
+    NO2_init = 0.6699438 # umol/L; mean at all stations in sigma-theta range 26.0-27.0
+    d15NO2_init = -19.29325 # per mil
+    d18NO2_init = 15.30216 # per mil
+
+    NO3_init = 26.74168 # umol/L; mean at all stations in sigma-theta range 26.0-27.0
+    d15NO3_init = 16.795 # per mil
+    d18NO3_init = 14.91383 # per mil
+    
+    NH4_init = 0.1105 # placeholder
+    d15NH4_init = 7 # placeholder number
+    d18NH4_init = 23.5 # placeholder number
+  } else if (initial_isotopes == "ATM"){
+    N2O_init = 6.3 # nmol/L; saturation value based on mean surface T&S
+    d15N2Oa_init = 15.7 # per mil; atmospheric N2O (Mohn et al., 2014)
+    d15N2Ob_init = -3.3 # per mil; atmospheric N2O (Mohn et al., 2014)
+    d18N2O_init = 44.3 # per mil; atmospheric N2O (Mohn et al., 2014)
+
+    NO2_init = 0.5 # umol/L; mean at [NO2-]>=0.1uM & sigma-theta<=25.0
+    d15NO2_init = -1.0 # per mil; mean at [NO2-]>=0.1uM & sigma-theta<=25.0
+    d18NO2_init = 12. # per mil; mean at [NO2-]>=0.1uM & sigma-theta<=25.0
+
+    NO3_init = 10.7 # umol/L; mean at [NO2-]<0.1uM & sigma-theta<=25.0
+    d15NO3_init = 7.0 
+    d18NO3_init = 19.0
+    
+    NH4_init = 0.1105 # placeholder number
+    d15NH4_init = 7 # placeholder number
+    d18NH4_init = 23.5 # placeholder number
+  } else if(initial_isotopes == "Stations 1-3"){
+    N2O_init = 39.0468 # nmol/L; mean of Stations 1-3 in sigma-theta range 26.0-27.0
+    d15N2Oa_init = 19.7312 # per mil
+    d15N2Ob_init = 4.2912 # per mil
+    d18N2O_init = 59.482 # per mil
+
+    NO2_init = 0.04121053 # umol/L; mean at Stations 1-3 in sigma-theta range 26.0-27.0
+    d15NO2_init = -10.62679 # per mil
+    d18NO2_init = 16.62982 # per mil
+
+    NO3_init = 26.97 # umol/L; mean at Stations 1-3 in sigma-theta range 26.0-27.0
+    d15NO3_init = 15.382 # per mil
+    d18NO3_init = 12.97 # per mil
+    
+    NH4_init = 0.1105 # placeholder number
+    d15NH4_init = 7 # placeholder number
+    d18NH4_init = 23.5 # placeholder number
+  } else if(initial_isotopes == "Stations 4-7 & 12"){
+    N2O_init = 16.59891 # nmol/L; mean of Stations 4-7 & 12 in sigma-theta range 26.0-27.0
+    d15N2Oa_init = 30.03891 # per mil
+    d15N2Ob_init = -5.099565 # per mil
+    d18N2O_init = 81.43326 # per mil
+
+    NO2_init = 1.000217 # umol/L; mean at Stations 4-7 & 12 in sigma-theta range 26.0-27.0
+    d15NO2_init = -18.72959 # per mil
+    d18NO2_init = 15.30052 # per mil
+
+    NO3_init = 25.46239 # umol/L; mean at Stations 4-7 & 12 in sigma-theta range 26.0-27.0
+    d15NO3_init = 17.80429 # per mil
+    d18NO3_init = 16.30229 # per mil
+    
+    NH4_init = 0.1105 # placeholder number
+    d15NH4_init = 7 # placeholder number
+    d18NH4_init = 23.5 # placeholder number
+  } else if(initial_isotopes == "Stations 8-11"){
+    N2O_init = 38.92087 # nmol/L; mean of Stations 8-11 in sigma-theta range 26.0-27.0
+    d15N2Oa_init = 24.40609 # per mil
+    d15N2Ob_init = -4.842174 # per mil
+    d18N2O_init = 74.94522 # per mil
+
+    NO2_init = 0.5346667 # umol/L; mean at Stations 8-11 in sigma-theta range 26.0-27.0
+    d15NO2_init = -24.7185 # per mil
+    d18NO2_init = 14.867 # per mil
+
+    NO3_init = 28.95583 # umol/L; mean at Stations 8-11 in sigma-theta range 26.0-27.0
+    d15NO3_init = 17.80429 # per mil
+    d18NO3_init = 16.30229 # per mil      ### IMPORTANT: no isotopes of no3 available in this regime/values from 4-7&12 are used here
+    
+    NH4_init = 0.1105 # placeholder number
+    d15NH4_init = 7 # placeholder number
+    d18NH4_init = 23.5 # placeholder number
+  } else if(initial_isotopes == "Test"){ # <---- initial N2O from Stns. 1-3 but initial NO2/NO3 from Stns. 4-12
+    N2O_init = 39.0468 # nmol/L; mean of Stations 1-3 in sigma-theta range 26.0-27.0
+    d15N2Oa_init = 19.7312 # per mil
+    d15N2Ob_init = 4.2912 # per mil
+    d18N2O_init = 59.482 # per mil
+
+    NO2_init = 0.8406 # umol/L; mean at Stations 4-12 in sigma-theta range 26.0-27.0
+    d15NO2_init = -19.81848 # per mil
+    d18NO2_init = 15.2217 # per mil
+
+    NO3_init = 26.66014 # umol/L; mean at Stations 4-12 in sigma-theta range 26.0-27.0
+    d15NO3_init = 17.80429 # per mil
+    d18NO3_init = 16.30229 # per mil
+    
+    NH4_init = 0.1105 # placeholder number
+    d15NH4_init = 7 # placeholder number
+    d18NH4_init = 23.5 # placeholder number
+  } else { #custom values (usually what's used)
+    N2O_init = initial_isotopes[1]
+    d15N2Oa_init = initial_isotopes[2]
+    d15N2Ob_init = initial_isotopes[3]
+    d18N2O_init = initial_isotopes[4]
+
+    NO2_init = initial_isotopes[5]
+    d15NO2_init = initial_isotopes[6]
+    d18NO2_init = initial_isotopes[7]
+
+    NO3_init = initial_isotopes[8]
+    d15NO3_init = initial_isotopes[9]
+    d18NO3_init = initial_isotopes[10]
+    
+    NH4_init = initial_isotopes[11]
+    d15NH4_init = initial_isotopes[12]
+    d18NH4_init = initial_isotopes[13]
+  }
+
+
+
+  ### CONVERTING DELTA VALUES FOR SUBSTRATES
+  d15NO2 = d15NO2_init * matrix(1,t,1)
+  R15NO2 = convert_delta(d=d15NO2,i='d15N')
+  no2_14 = NO2_init * matrix(1,t,1)
+  no2_15 = no2_14*R15NO2
+
+  d18NO2  = d18NO2_init * matrix(1,t,1)
+  R18NO2 = convert_delta(d=d18NO2,i='d18O')
+  no2_16 = 2*no2_14 # 2 O atoms per every N
+  no2_18 = no2_16*R18NO2
+
+  d15NO3 = d15NO3_init * matrix(1,t,1)
+  R15NO3 = convert_delta(d=d15NO3,i='d15N')
+  no3_14 = NO3_init * matrix(1,t,1)
+  no3_15 = no3_14*R15NO3
+
+  d18NO3 = d18NO3_init * matrix(1,t,1)
+  R18NO3 = convert_delta(d=d18NO3,i='d18O')
+  no3_16 = 3*no3_14 # 3 O atoms per every N
+  no3_18 = no3_16*R18NO3
+  
+  d15NH4 = d15NH4_init * matrix(1,t,1)
+  R15NH4 = convert_delta(d=d15NH4,i='d15N')
+  nh4_14 = NH4_init * matrix(1,t,1)
+  nh4_15 = nh4_14*R15NH4
+  
+  d18NH4 = d18NH4_init * matrix(1,t,1)
+  R18NH4 = convert_delta(d=d18NH4,i='d18O')
+  nh4_16 = 1*nh4_14 # 1 O atoms per every N
+  nh4_18 = nh4_16*R18NH4
+
+
+  ### ISOTOPE CONSTANTS
+  R15std = 0.00367647 # air N2
+  R18std = 0.00200517 # VSMOW
+  # exchange factor for 18O in no2
+  E = 0.09 # exchange
+  kexch = E * matrix(1,t,t) # get TxT array of exchange
+  d18h2o = 0.
+  R18h2o = convert_delta(d=d18h2o, i="d18O")
+
+  ###INITIALIZE N2O VARIABLES
+
+  # initialize with boundary conditions
+  c(N2O_i, d15n2oA, d15n2oB, d18n2o) %<-% c(N2O_init, d15N2Oa_init, d15N2Ob_init, d18N2O_init)
+
+  R15n2oA_i = convert_delta(d=d15n2oA,i="d15N")
+  R15n2oB_i = convert_delta(d=d15n2oB, i="d15N")
+  R18n2o_i = convert_delta(d=d18n2o, i="d18O")
+
+  # 5 state variables
+  n2o_14_i = N2O_i / 1000. # umol/L
+  n2o_15A_i = R15n2oA_i * n2o_14_i
+  n2o_15B_i = R15n2oB_i * n2o_14_i
+  n2o_16_i = 0.5 * n2o_14_i # 2 nitrogen atoms per oxygen!
+  n2o_18_i = R18n2o_i * n2o_16_i
+
+  # create empty matrices of state variables to be filled by loop
+  n2o_14 = matrix(nrow = t)
+  n2o_15A = matrix(nrow = t)
+  n2o_15B = matrix(nrow = t)
+  n2o_16 = matrix(nrow = t)
+  n2o_18 = matrix(nrow = t)
+
+  # initial values of state variables
+  n2o_14[1] = n2o_14_i
+  n2o_15A[1] = n2o_15A_i
+  n2o_15B[1] = n2o_15B_i
+  n2o_16[1] = n2o_16_i
+  n2o_18[1] = n2o_18_i
+
+  #create matrix of rate constants
+  kNO2_to_N2O = par[1] * matrix(1,t,1) #absolute value prevents the algorithm from using a negative number
+  kNO3_to_N2O = par[2] * matrix(1,t,1)
+  kN2O_CONS = par[3] * matrix(1,t,1)
+  kNH4_to_N2O_AOA = par[4] * matrix(1,t,1)
+  kNH4_to_N2O_AOB = par[5] * matrix(1,t,1)
+  
+  #### HEART OF MODEL ####
+  ########################
+  
+  for(i in 1:(t-1)){
+  
+    # fill in values
+    n2o_14[i+1] = n2o_14[i] + dt*(kNO3_to_N2O[i] * no3_14[i] # NO3 --> N2O
+                                      + kNO2_to_N2O[i] * no2_14[i] # NO2 --> N2O
+                                      - kN2O_CONS[i] * n2o_14[i] # N2O --> N2 (N2O consumption)
+                                      + kNH4_to_N2O_AOA[i] * nh4_14[i] # AOA Nitrification
+                                      + kNH4_to_N2O_AOB[i] * nh4_14[i]) # AOB Nitrifications
+  
+    n2o_15A[i+1] = n2o_15A[i] + dt*(kNO3_to_N2O[i] / alpha15noxA * no3_15[i] # NO3 --> N2O isotope effects
+                                      + kNO2_to_N2O[i] / alpha15noxA * no2_15[i] # NO2 --> N2O isotope effects
+                                      - kN2O_CONS[i] / alpha15N2O_CONSA * n2o_15A[i] # N2O --> N2 isotope effects (N2O consumption)
+                                      + kNH4_to_N2O_AOA[i] / alpha15nh4A_AOA * nh4_15[i] # AOA Nitrification
+                                      + kNH4_to_N2O_AOB[i] / alpha15nh4A_AOB * nh4_15[i]) # AOB Nitrification
+  
+    n2o_15B[i+1] = n2o_15B[i] + dt*(kNO3_to_N2O[i] / alpha15noxB * no3_15[i] # NO3 --> N2O isotope effects
+                                      + kNO2_to_N2O[i] / alpha15noxB * no2_15[i] # NO2 --> N2O isotope effects
+                                      - kN2O_CONS[i] / alpha15N2O_CONSB * n2o_15B[i] # N2O --> N2 isotope effects (N2O consumption)
+                                      + kNH4_to_N2O_AOA[i] / alpha15nh4B_AOA * nh4_15[i] # AOA Nitrification
+                                      + kNH4_to_N2O_AOB[i] / alpha15nh4B_AOB * nh4_15[i]) # AOB Nitrification
+  
+    n2o_16[i+1] = n2o_16[i] + dt*(kNO3_to_N2O[i]*0.5/3*no3_16[i] # NO3 --> N2O
+                                      +kNO2_to_N2O[i]*0.5/2*no2_16[i] # NO2 --> N2O
+                                      -kN2O_CONS[i]*n2o_16[i] #N2O --> N2 (N2O consumption)
+                                      +kNH4_to_N2O_AOA[i]*nh4_16[i]*0.5 # AOA Nitrification
+                                      +kNH4_to_N2O_AOB[i]*nh4_16[i]*0.5)# # AOB Nitrification
+  
+    n2o_18[i+1] = n2o_18[i] + dt*(kNO3_to_N2O[i] * alpha18NO3_to_N2O_b * alpha18NO2_to_N2O_b / alpha18NO2_to_N2O * 0.5/3 * no3_18[i]
+                                      +kNO2_to_N2O[i] * alpha18NO2_to_N2O_b / alpha18NO2_to_N2O * 0.5/2 * no2_18[i]
+                                      -kN2O_CONS[i] / alpha18N2O_CONS * n2o_18[i]
+                                      +kNH4_to_N2O_AOA[i] / alpha18nh4_AOA * 0.5 * nh4_18[i] # AOA Nitrification
+                                      +kNH4_to_N2O_AOB[i] / alpha18nh4_AOB * 0.5 * nh4_18[i]) # AOB Nitrification
+  }
+  
+  ## For including water exchange rate, not used
+  #
+  # -kexch[iT,iT]*no3_18[iT]
+  #  +kexch[iT,iT]*no3_16[iT]*alphaexch*R18h2o
+  # 
+  
+  #### FORMATTING MODEL OUTPUT AS DATAFRAME ####
+  ##############################################
+  
+  output = data.frame("step" = 1:t)
+  output$no3_conc = no3_14
+  output$d15N_no3 = d15NO3
+  output$d18O_no3 = d18NO3
+  output$no2_conc = no2_14
+  output$d15N_no2 = d15NO2
+  output$d18O_no2 = d18NO2
+  output$n2o_conc = n2o_14*1000
+  output$d15Na_n2o = (((n2o_15A/n2o_14)/R15std)-1)*1000
+  output$d15Nb_n2o = (((n2o_15B/n2o_14)/R15std)-1)*1000
+  output$d18O_n2o = (((n2o_18/n2o_16)/R18std)-1)*1000
+  output$SP_n2o = output$d15Na_n2o - output$d15Nb_n2o
+
+  #### CALCULATING MEAN-SQUARED ERROR ####
+  ########################################
+
+  lets_interpolate2 = function(model_output, observations){
+    #performing interpolation of model output to cruise observation concentrations (concentration are x values and isotopes are y values)
+    d18O_int = approx(x = model_output$n2o_conc, y = model_output$d18O_n2o, xout = observations$n2o_conc, rule = 2)
+    d15Na_int = approx(x = model_output$n2o_conc, y = model_output$d15Na_n2o, xout = observations$n2o_conc, rule = 2)
+    d15Nb_int = approx(x = model_output$n2o_conc, y = model_output$d15Nb_n2o, xout = observations$n2o_conc, rule = 2)
+    SP_int = approx(x = model_output$n2o_conc, y = model_output$SP_n2o, xout = observations$n2o_conc, rule = 2)
+    #MSE between cruise observations and model output
+    MSE_d15Na = mean((observations$d15Na - d15Na_int$y)^2)
+    MSE_d15Nb = mean((observations$d15Nb - d15Nb_int$y)^2)
+    MSE_d18O = mean((observations$d18O - d18O_int$y)^2)
+    MSE_SP = mean((observations$SP - SP_int$y)^2)
+    MSE_total = mean(c(MSE_d15Na,MSE_d15Nb,MSE_d18O,MSE_SP))
+
+    ### Different penalties that can be employed to MSE function so that when it is run through optimization, you can put contraints on model output
+    ### Making sure there are no NA values
+    for(i in 1:nrow(observations)){  
+      if(any(is.na(observations$n2o_conc >= max(model_output$n2o_conc)))){
+        MSE_total = MSE_total + 999
+    ### Force model output to span observatons by adding a penalty if any observation is greater than maximum concentration in model output
+      } else if(observations$n2o_conc[i] >= max(model_output$n2o_conc)){
+        MSE_total = MSE_total + 999
+      }
+    }
+    ### Placing a cap on possible N2O concetrations by adding penalty for super-high values
+    if(max(model_output$n2o_conc,na.rm=TRUE) >= 1000){
+      MSE_total = MSE_total + 999
+    }
+    ### Ensures all of the N2O isn't produced in one time-step (played with)
+    #if(model_output$n2o_conc[2] >= 2*model_output$n2o_conc[1]){
+      #MSE_total = MSE_total + 999
+    #}
+
+    return(MSE_total)
+  }  
+
+#Calling the function to calculate MSE between model output and cruise observations  
+MSE_output = lets_interpolate2(output, obs)  
+
+  return(MSE_output)
+}
+```

@@ -1,0 +1,14 @@
+cff-version: 1.0.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Monreal"
+  given-names: "Patrick"
+  orcid: "https://orcid.org/0000-0001-5343-4142"
+- family-names: "Kelly"
+  given-names: "Colette"
+  orcid: "https://orcid.org/0000-0002-3660-4442"
+title: "ETNP 2016 Time-Dependent N2O Isotopocule Model"
+version: 1.0.0
+doi: 10.5281/zenodo.5768147
+date-released: 2021-12-08
+url: "https://github.com/patrickmon38/n2o-isotope-model/"

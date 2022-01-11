@@ -7,6 +7,12 @@ authors:
 - family-names: "Kelly"
   given-names: "Colette"
   orcid: "https://orcid.org/0000-0002-3660-4442"
+- family-names: "Travis"
+  given-names: "Nicole"
+  orcid: "https://orcid.org/0000-0000-0000-0000"
+- family-names: "Casciotti"
+  given-names: "Karen"
+  orcid: "https://orcid.org/0000-0002-5286-7795"
 title: "ETNP 2016 Time-Dependent N2O Isotopocule Model"
 version: 1.0.0
 doi: 10.5281/zenodo.5768147

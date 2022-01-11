@@ -5,7 +5,7 @@ The code is formatted as an R-Markdown file and knit HTML. The function has thre
 
 **COPY AND PASTE HTML LINK INTO https://htmlpreview.github.io/ FOR EASY VIEWING OF DOCUMENT**
 
-@author: Colette L. Kelly, Stanford University (pmonreal@stanford.edu)
+@author: Patrick J. Monreal, Stanford University (pmonreal@stanford.edu)
 
 MIT License
 

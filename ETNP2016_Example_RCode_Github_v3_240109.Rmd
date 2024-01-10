@@ -15,8 +15,9 @@ output: html_document
 ```{r}
 library(dplyr)
 library(ggplot2)
-setwd("~/NOT_Downloads_Folder/N2O Catch-All (To Be Organized Later)/N2O Spreadsheets/")
+setwd("~/NOT_Downloads_Folder/Stanford/N2O Catch-All (To Be Organized Later)/N2O Spreadsheets/")
 
+#This file will also be uploaded to Zenodo
 n2o_master = read.csv("n2o_for_clustering_new.csv",header = TRUE)
 
 n2o_master$station = factor(n2o_master$station, levels = c("1","2","3","4","5","6","7","8","9","10","11","12"))
@@ -53,24 +54,24 @@ exponential = function(time_vector,initial,decayrate,min){
 # Function for converting delta values into isotope ratios
 convert_delta = function(i, d){            
   
-  R15std = 0.00367647 # air N2
-  R18std = 0.00200517 # VSMOW
+    R15std = 0.00367647 # air N2
+    R18std = 0.00200517 # VSMOW
   
-  if(i == "d15N"){
-    R = ((d/1000)+1)*R15std
-  } else if(i == "d18O"){
-    R = ((d/1000)+1)*R18std
-  } else{
-    R = -999
+    if(i == "d15N"){
+      R = ((d/1000)+1)*R15std
+    } else if(i == "d18O"){
+      R = ((d/1000)+1)*R18std
+    } else{
+      R = -999
+    }
+  
+    if(-999 %in% R){
+      return("Must set i equal to 'd15N' or d18O'")
+    } else{
+      return(R)
+    }
+  
   }
-  
-  if(R == -999){
-    return("Must set i equal to 'd15N' or d18O'")
-  } else{
-    return(R)
-  }
-  
-}
 
 ### BELOW IS THE MODEL FUNCTION ###
   
@@ -104,7 +105,8 @@ my_model_forlackofabetterterm = function(alpha_values = "default", # represents 
 
   ### DEFINE ISOTOPE EFFECTS
 
-  if(alpha_values == "default"){
+  if(length(alpha_values) == 1){
+    if(alpha_values == "default"){
     # Isotope effects, trans into fractionation factors
     alpha15noxA = 22/1000+1 # NOx -> N2Oa (Toyoda et al., 2005)
     alpha15N2O_CONSA = 10.5/1000+1  # N2Oa -> N2 (This study)
@@ -122,7 +124,8 @@ my_model_forlackofabetterterm = function(alpha_values = "default", # represents 
     alpha15nh4A_AOB = 62.5/1000+1 #NH4+ --> N20 (Sutka et al., 2006)          
     alpha15nh4B_AOB = 31.5/1000+1 #NH4+ --> N20 (Sutka et al., 2006)
     alpha18nh4_AOB = 3/1000+1 #NH4+ --> N20 (Frame and Casciotti, 2010)
-  } else {
+  }
+  }else{
     alpha15noxA = alpha_values[1]/1000+1 #Custom Values
     alpha15N2O_CONSA = alpha_values[2]/1000+1
     alpha15noxB = alpha_values[3]/1000+1
@@ -145,7 +148,8 @@ my_model_forlackofabetterterm = function(alpha_values = "default", # represents 
   # Below are different initializations of isotopic values
   # Initialization used for each run detailed in paper
 
-  if(initial_isotopes == "All Stations"){
+  if(length(initial_isotopes) == 1){
+    if(initial_isotopes == "All Stations"){
     N2O_init = 28.03085 # nmol/L; mean of all stations in sigma-theta range 26.0-27.0
     d15N2Oa_init = 25.91926 # per mil
     d15N2Ob_init = -2.539043 # per mil
@@ -225,7 +229,7 @@ my_model_forlackofabetterterm = function(alpha_values = "default", # represents 
 
     NO3_init = 28.95583 # umol/L; mean at Stations 8-11 in sigma-theta range 26.0-27.0
     d15NO3_init = 17.80429 # per mil
-    d18NO3_init = 16.30229 # per mil ### IMPORTANT: no isotopes of no3 available in this regime/values from 4-7&12 are used here
+    d18NO3_init = 16.30229 # per mil      ### IMPORTANT: no isotopes of no3 available in this regime/values from 4-7&12 are used here
     
     NH4_init = 0.1105 # placeholder number
     d15NH4_init = 7 # placeholder number
@@ -247,7 +251,8 @@ my_model_forlackofabetterterm = function(alpha_values = "default", # represents 
     NH4_init = 0.1105 # placeholder number
     d15NH4_init = 7 # placeholder number
     d18NH4_init = 23.5 # placeholder number
-  } else { #custom values (usually what's used)
+  }
+  }else { #custom values (usually what's used)
     N2O_init = initial_isotopes[1]
     d15N2Oa_init = initial_isotopes[2]
     d15N2Ob_init = initial_isotopes[3]
@@ -465,17 +470,19 @@ model_MSE_for_optim = function(par, # vector of values that we optimize for. In 
       R = -999
     }
   
-    if(R == -999){
+    if(-999 %in% R){
       return("Must set i equal to 'd15N' or d18O'")
     } else{
       return(R)
     }
   
   }
+  
+  
 
   ### DEFINE ISOTOPE EFFECTS
-
-  if(alpha_values == "default"){
+  if(length(alpha_values) == 1){
+    if(alpha_values == "default"){
     # Isotope effects, trans into fractionation factors
     alpha15noxA = 22/1000+1 # NOx -> N2Oa (Toyoda et al., 2005)
     alpha15N2O_CONSA = 10.5/1000+1  # N2Oa -> N2 (This study)
@@ -493,7 +500,8 @@ model_MSE_for_optim = function(par, # vector of values that we optimize for. In 
     alpha15nh4A_AOB = 62.5/1000+1 #NH4+ --> N20 (Sutka et al., 2006)          
     alpha15nh4B_AOB = 31.5/1000+1 #NH4+ --> N20 (Sutka et al., 2006)
     alpha18nh4_AOB = 3/1000+1 #NH4+ --> N20 (Frame and Casciotti, 2010)
-  } else {
+  }
+  }else{
     alpha15noxA = alpha_values[1]/1000+1 #Custom Values
     alpha15N2O_CONSA = alpha_values[2]/1000+1
     alpha15noxB = alpha_values[3]/1000+1
@@ -515,8 +523,9 @@ model_MSE_for_optim = function(par, # vector of values that we optimize for. In 
   ### DEFINE INITIAL CONCENTRATIONS AND ISOTOPES
   # Below are different initializations of isotopic values
   # Initialization used for each run detailed in paper
-
-  if(initial_isotopes == "All Stations"){
+  
+  if(length(initial_isotopes) == 1){
+    if(initial_isotopes == "All Stations"){
     N2O_init = 28.03085 # nmol/L; mean of all stations in sigma-theta range 26.0-27.0
     d15N2Oa_init = 25.91926 # per mil
     d15N2Ob_init = -2.539043 # per mil
@@ -618,7 +627,8 @@ model_MSE_for_optim = function(par, # vector of values that we optimize for. In 
     NH4_init = 0.1105 # placeholder number
     d15NH4_init = 7 # placeholder number
     d18NH4_init = 23.5 # placeholder number
-  } else { #custom values (usually what's used)
+  }
+  }else { #custom values (usually what's used)
     N2O_init = initial_isotopes[1]
     d15N2Oa_init = initial_isotopes[2]
     d15N2Ob_init = initial_isotopes[3]
@@ -941,7 +951,7 @@ min_normal = my_model_forlackofabetterterm(alpha_values = min,
 
 Generating graphs of model output
 ```{r}
-color_labels = c(expression(paste(delta^18,"O-",N[2],O)),expression(paste(delta^15,N[2],O^alpha)),expression(paste(delta^15,N[2],O^beta)),"SP")
+color_labels = c(expression(paste(delta^15,N[2],O^alpha)),expression(paste(delta^15,N[2],O^beta)),expression(paste(delta^18,"O-",N[2],O)),"SP")
 
 # Model Plot
 graph1 = ggplot() +
